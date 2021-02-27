@@ -1,0 +1,210 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+# World Happiness Report | Machine Learning Project
+## HarvardX: PH125.9x Data Science Capstone
+### Ian Mathers | February 26, 2021
+
+### Introduction
+The World Happiness Report ranks 156 countries based on their citizens' happiness levels. It is a publication of the Sustainable Development Solutions Network with data collected by Gallup World Poll. It is a survey that combines a number of economic and social factors into a total score. The purpose of this project is to analyze this data, visualize it and apply some basic machine learning prediction models.
+
+### Dataset
+The dataset was obtained on [Kaggle](https://www.kaggle.com/unsdsn/world-happiness). Reports from 2015 and 2019 are used. For simplicity the two files are automatically downloaded during the loading process below.
+
+### Data Loading
+```{r results = 'hide', message = FALSE, warning = FALSE}
+# if required packages
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+
+# libraries
+library(tidyverse)
+library(caret)
+
+# csv file downloads from GitHub
+dat15 <- read.csv("https://raw.githubusercontent.com/Airborne737/World_Happiness/master/2015.csv")
+dat19 <- read.csv("https://raw.githubusercontent.com/Airborne737/World_Happiness/master/2019.csv")
+
+dat15 <- dat15 %>% 
+  rename(country = Country, score = Happiness.Score, GDP_capita = Economy..GDP.per.Capita., healthy_life_expectancy = Health..Life.Expectancy., freedom = Freedom, generosity = Generosity, corruption = Trust..Government.Corruption.) %>%
+  select(country, score, GDP_capita, healthy_life_expectancy, freedom, generosity, corruption)
+
+dat19 <- dat19 %>%
+  rename(country = Country.or.region, score = Score, GDP_capita = GDP.per.capita, healthy_life_expectancy = Healthy.life.expectancy, freedom = Freedom.to.make.life.choices, generosity = Generosity, corruption = Perceptions.of.corruption) %>%
+  select(country, score, GDP_capita, healthy_life_expectancy, freedom, generosity, corruption)
+```
+
+### Data Preparation, Training and Testing
+The datasets are small. The 2015 set contains 158 observations, one for each country. 2019 has 156. Due to the small sample sizes the 2015 material will be divided into two and used for training/testing of several algorithms. Final validation of the best model will use the 2019 set. Only matching data of the two years have been kept with the columns renamed. They have been verified for consistency. Accuracy will be compared using RMSE. Residual mean squared error is defined as:
+
+$$RMSE=\sqrt{\frac{1}{N}\sum_{u,i}(\hat{x}_i-x_i)^2}$$
+
+Where $N$ is the number of observations, $x_i$ the actual observations for variable $i$  and $\hat{x}_i$ the predicted values for variable $i$. The RMSE is a commonly used loss function that simply measures the differences between predicted and observed values. It can be interpreted similarly to a standard deviation.
+
+The following columns will be used to predict the happiness scores: GDP per capita, healthy life expectancy, perception of freedom, giving and generosity and trust in government which is listed as corruption.
+
+```{r results = 'hide', message = FALSE, warning = FALSE}
+# create training and testing sets
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = dat15$score, times = 1, p = 0.5, list = FALSE)
+train_set <- dat15[-test_index,]
+test_set <- dat15[test_index,]
+
+# RMSE defined
+RMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+```
+
+### Exploratory Data Analysis
+We start by analyzing the data structure from 2015 (dat15). It shows 158 observations, each row is a country, and the 7 renamed columns. All classes are numeric aside from country which is comprised of characters.
+
+```{r}
+str(dat15)
+```
+
+dat19 is structured the same except that 156 countries were ranked that year.
+
+```{r}
+str(dat19)
+```
+
+The summary function provides statistical summaries for each column. The data is consistent across both years.  
+
+```{r}
+summary(dat15)
+
+summary(dat19)
+```
+
+
+A look at the top 20 countries with the highest happiness scores in 2015 shows many coming from Europe.
+
+```{r fig.align='center'}
+dat15 %>%
+  arrange(-score) %>%
+  top_n(20, score) %>%
+  ggplot(aes(score, reorder(country, score))) +
+  geom_bar(color = "black", fill = "forestgreen", stat = "identity") +
+  xlab("Happiness Scores") +
+  ylab(NULL) +
+  theme_bw()
+```
+
+2019 saw Finland taking the lead over Switzerland. Scandinavian countries are consistently rated high. The United Kingdom, Germany and the Czech Republic made the top 20 that year.
+
+```{r fig.align='center'}
+dat19 %>%
+  arrange(-score) %>%
+  top_n(20, score) %>%
+  ggplot(aes(score, reorder(country, score))) +
+  geom_bar(color = "black", fill = "deepskyblue2", stat = "identity") +
+  xlab("Happiness Scores") +
+  ylab(NULL) +
+  theme_bw()
+```
+
+The distribution of the happiness scores shows three peaks or modes. Making it a multimodal distribution.
+
+```{r fig.align='center'}
+dat19 %>%
+  ggplot(aes(score)) +
+  geom_histogram(color = "black", fill = "deepskyblue2", bins = 30) +
+  labs(x = "Happiness Scores", y = "Count") +
+  scale_x_continuous() +
+  theme_bw()
+```
+
+A correlation matrix reveals how the data points are correlated to each other. It is not surprising that healthy life expectancy is the most correlated with the score. A more useful measure is GDP per capita. It makes sense to expect economic growth to have a high impact on happiness levels. Interestingly generosity and corruption have the lowest numbers. Correlation is not causation however and more analysis is needed to make conclusions.
+
+```{r}
+dat19 %>%
+  select(-country) %>%
+  cor()
+```
+
+Here is a list of the countries with the highest GDP per capita. Not surprisingly we also find the happiest ones which reflects the high correlation. The order is a bit different. 
+
+```{r fig.align='center'}
+dat19 %>%
+  arrange(-GDP_capita) %>%
+  top_n(20, score) %>%
+  ggplot(aes(GDP_capita, reorder(country, GDP_capita))) +
+  geom_bar(color = "black", fill = "deepskyblue2", stat = "identity") +
+  xlab("GDP per Capita") +
+  ylab(NULL) +
+  theme_bw()
+```
+
+### Model 1
+The first model that will be used to predict happiness scores based on all the data points is a simple linear regression model. It will provide a baseline to work from.
+
+```{r}
+lm_train <- train_set %>% select(-country) %>% train(score ~ ., method = "lm", data = .)
+lm_predict <- predict(lm_train, test_set)
+lm_result <- RMSE(test_set$score, lm_predict)
+results <- tibble(Method = "Model 1: Linear Regression", RMSE = lm_result)
+results %>% knitr::kable()
+```
+
+Our first RMSE result comes in at 0.5866. Let's see if we can improve on it with different methods.
+
+### Model 2
+The second model will use Random Forest. It uses randomness to build an uncorrelated forest of trees which are used to predict an outcome.
+
+```{r warning = FALSE}
+set.seed(1, sample.kind="Rounding")
+fitcontrol <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+rf_train <- train_set %>% select(-country) %>% train(score ~ ., method = "rf", trControl = fitcontrol, data = .)
+rf_predict <- predict(rf_train, test_set)
+rf_result <- RMSE(test_set$score, rf_predict)
+results <- bind_rows(results, tibble(Method = "Model 2: Random Forest", RMSE = rf_result))
+results %>% knitr::kable()
+```
+
+Random Forest provides a slight gain on the linear model.
+
+### Model 3
+The third model uses the Ranger implementation of Random Forests.
+
+```{r warning = FALSE}
+set.seed(1, sample.kind="Rounding")
+ranger_train <- train_set %>% select(-country) %>% train(score ~ ., method = "ranger", trControl = trainControl(method = "cv", number = 5), num.trees = 500, data = .)
+ranger_predict <- predict(ranger_train, test_set)
+ranger_result <- RMSE(test_set$score, ranger_predict)
+results <- bind_rows(results, tibble(Method = "Model 3: Ranger RF", RMSE = ranger_result))
+results %>% knitr::kable()
+```
+
+Ranger provides a decent gain on the previous model breaking below 0.58.
+
+### Model 4
+We turn to a non-parametric algorithm, K-Nearest Neighbors. Let's see how it performs versus the others.
+
+```{r warning = FALSE}
+set.seed(1, sample.kind="Rounding")
+knn_train <- train_set %>% select(-country) %>% train(score ~ ., method = "knn", trControl = trainControl(method = "repeatedcv", number = 10, repeats = 3), data = .)
+knn_predict <- predict(knn_train, test_set)
+knn_result <- RMSE(test_set$score, knn_predict)
+results <- bind_rows(results, tibble(Method = "Model 4: K-Nearest Neighbors", RMSE = knn_result))
+results %>% knitr::kable()
+```
+
+KNN has lowered the RMSE significantly. We will use it as our final model.
+
+### Final Validation
+Having found our model with the lowest RMSE using KNN the final step is to train it on dat15 and test its accuracy using dat19.
+
+```{r warning = FALSE}
+set.seed(1, sample.kind="Rounding")
+knn_train15 <- dat15 %>% select(-country) %>% train(score ~ ., method = "knn", trControl = trainControl(method = "repeatedcv", number = 10, repeats = 3), data = .)
+knn_predict19 <- predict(knn_train15, dat19)
+final_result <- RMSE(dat19$score, knn_predict19)
+results <- bind_rows(results, tibble(Method = "Final validation: K-Nearest Neighbors", RMSE = final_result))
+results %>% knitr::kable()
+```
+
+### Conclusion
+The goal of this project was to collect, process and analyze data on the World Happiness Reports from 2015 and 2019. We then used several basic algorithms on small sample sizes to make predictions on the happiness scores. We started with a baseline model and progressively improved the RMSE results with minimal tuning. The final validation shows a RMSE of 0.5804. The accuracy is limited. The continued evolution of machine learning allows for limitless approaches in tackling such exercises with more complexity and accuracy. With our goals achieved this concludes the project.
